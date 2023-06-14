@@ -7,6 +7,7 @@ import jax.lax as lax
 import jax.numpy as jnp
 import jax.numpy.linalg as jnla
 import lineax as lx
+
 from jax.experimental import sparse
 from jaxtyping import Array, ArrayLike, Float  # pyright: ignore
 

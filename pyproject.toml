@@ -60,6 +60,7 @@ ignore-init-module-imports = true
 [tool.ruff.isort]
 combine-as-imports = true
 lines-after-imports = 2
+lines-between-types = 1
 known-local-folder = ["src"]
 known-first-party = ["geneax"]
 section-order = ["future", "standard-library", "third-party", "jax-ecosystem", "first-party", "local-folder"]
