@@ -1,0 +1,6 @@
+importlib-metadata; python_version<"3.8"
+jax
+jaxlib
+lineax
+setuptools
+typing_extensions

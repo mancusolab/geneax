@@ -1,0 +1,10 @@
+importlib-metadata; python_version<"3.8"
+jax
+jaxlib
+lineax
+numpy
+pytest
+pytest-accept
+pytest-cov
+setuptools
+typing_extensions
