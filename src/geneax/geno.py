@@ -92,11 +92,15 @@ class SparseGenotype(lx.AbstractLinearOperator):
         dense_dtype: JAXType = jnp.float32,
     ):
         n, p = geno.shape
+        geno_op = _SparseMatrixOperator(geno, dense_dtype)
+
         if covar is None:
             covar = jnp.ones((n, 1), dtype=dense_dtype)
+            beta = sparse.sparsify(jnp.mean)(geno, axis=0).todense().astype(dense_dtype)
+            beta = beta.reshape((1, p))
+        else:
+            beta = _get_mean_terms(geno, covar)
 
-        beta = _get_mean_terms(geno, covar)
-        geno_op = _SparseMatrixOperator(geno, dense_dtype)
         center_op = lx.MatrixLinearOperator(covar) @ lx.MatrixLinearOperator(beta)
 
         if scale:

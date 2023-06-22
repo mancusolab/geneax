@@ -2,6 +2,7 @@
 src/geneax/_version.py
 
 # Temporary and binary files
+foo.py
 *~
 *.py[cod]
 *.so
