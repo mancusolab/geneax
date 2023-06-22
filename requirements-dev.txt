@@ -3,8 +3,8 @@ jax
 jaxlib
 lineax
 numpy
+plum
 pytest
 pytest-accept
 pytest-cov
 setuptools
-typing_extensions
