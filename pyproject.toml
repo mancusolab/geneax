@@ -30,8 +30,6 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/mancusolab/geneax/"
 
-
-
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"

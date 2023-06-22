@@ -1,3 +1,6 @@
+# version is auto-built by hatch, not need to store it...
+src/geneax/_version.py
+
 # Temporary and binary files
 *~
 *.py[cod]
