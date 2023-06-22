@@ -13,6 +13,7 @@ import geneax as gx
 
 
 config.update("jax_enable_x64", True)
+config.update("jax_default_matmul_precision", "highest")
 
 
 def _get_geno(key, N, P):
@@ -37,14 +38,16 @@ def test_matmul(N: int, P: int, K: int, sp_cls: Type[xsp.JAXSparse], seed: int =
 
     G = _get_geno(g_key, N, P)
     Z = (G - jnp.mean(G, axis=0)) / jnp.std(G, axis=0)
-    geno = gx.SparseGenotype(sp_cls.fromdense(G).astype(jnp.int8), scale=True)
+    geno = gx.SparseGenotype(
+        sp_cls.fromdense(G).astype(jnp.int8),
+        scale=True,
+    )
 
     key, r_key = rdm.split(key)
     R = rdm.normal(r_key, shape=(P, K))
     if K == 1:
-        R = (
-            R.flatten()
-        )  # edge-case that breaks due to broadcasting between (K,) * (K,1) = (K,K)
+        # edge-case that breaks due to broadcasting between (K,) * (K,1) = (K,K)
+        R = R.flatten()
 
     observed = geno @ R
     expected = Z @ R

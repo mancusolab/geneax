@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from functools import singledispatchmethod
 from typing import Optional
+
+from plum import dispatch
 
 import jax
 import jax.lax as lax
@@ -9,20 +10,14 @@ import jax.numpy as jnp
 import jax.numpy.linalg as jnla
 import lineax as lx
 
+from jax._src.dtypes import JAXType  # ug...
 from jax.experimental import sparse
-from jaxtyping import Array, ArrayLike
-
-
-def _default_floating_dtype():
-    if jax.config.jax_enable_x64:  # pyright: ignore
-        return jnp.float64
-    else:
-        return jnp.float32
+from jaxtyping import Array, ArrayLike, Float, Num
 
 
 @jax.jit
 @sparse.sparsify
-def _get_model(geno: ArrayLike, covar: ArrayLike) -> Array:
+def _get_mean_terms(geno: ArrayLike, covar: ArrayLike) -> Array:
     m, n = covar.shape
     dtype = covar.dtype
     rcond = jnp.finfo(dtype).eps * max(n, m)
@@ -41,8 +36,6 @@ def _get_model(geno: ArrayLike, covar: ArrayLike) -> Array:
 @jax.jit
 @sparse.sparsify
 def _get_var(geno: sparse.JAXSparse):
-    n, p = geno.shape
-
     # def _inner(_, variant):
     #     var_idx = jnp.mean(variant **2) - jnp.mean(variant) ** 2
     #     return _, var_idx
@@ -55,86 +48,111 @@ def _get_var(geno: sparse.JAXSparse):
 
 class _SparseMatrixOperator(lx.AbstractLinearOperator):
     matrix: sparse.JAXSparse
+    dense_dtype: JAXType
+
+    def __init__(self, matrix, dense_dtype: JAXType = jnp.float32):
+        self.matrix = matrix
+        self.dense_dtype = dense_dtype
 
     def mv(self, vector: ArrayLike):
         return sparse.sparsify(jnp.matmul)(
             self.matrix, vector, precision=lax.Precision.HIGHEST
         )
 
-    def as_matrix(self):
-        raise ValueError("Refusing to materialise sparse matrix.")
+    def as_matrix(self) -> Float[Array, "n p"]:
+        # raise ValueError("Refusing to materialise sparse matrix.")
         # Or you could do:
-        # return self.matrix.todense()
+        return self.matrix.todense()
 
-    def transpose(self):
-        return _SparseMatrixOperator(self.matrix.T)
+    def transpose(self) -> "_SparseMatrixOperator":
+        return _SparseMatrixOperator(self.matrix.T, self.dense_dtype)
 
-    def in_structure(self):
+    def in_structure(self) -> jax.ShapeDtypeStruct:
         _, in_size = self.matrix.shape
-        return jax.ShapeDtypeStruct((in_size,), _default_floating_dtype())
+        return jax.ShapeDtypeStruct((in_size,), self.dense_dtype)
 
-    def out_structure(self):
+    def out_structure(self) -> jax.ShapeDtypeStruct:
         out_size, _ = self.matrix.shape
-        return jax.ShapeDtypeStruct((out_size,), _default_floating_dtype())
+        return jax.ShapeDtypeStruct((out_size,), self.dense_dtype)
 
 
 class SparseGenotype(lx.AbstractLinearOperator):
     geno: lx.AbstractLinearOperator
 
+    @dispatch
+    def __init__(self, geno: lx.AbstractLinearOperator):
+        self.geno = geno
+
+    @dispatch
     def __init__(
-        self, geno: sparse.JAXSparse, covar: Optional[ArrayLike] = None, scale=False
+        self,
+        geno: sparse.JAXSparse,
+        covar: Optional[ArrayLike] = None,
+        scale: bool = False,
+        dense_dtype: JAXType = jnp.float32,
     ):
         n, p = geno.shape
         if covar is None:
-            covar = jnp.ones((n, 1))
-        if scale:
-            wgt = jnp.sqrt(_get_var(geno).todense()).astype(covar.dtype)
-            wgt = 1.0 / wgt
-        else:
-            wgt = jnp.ones((p,))
+            covar = jnp.ones((n, 1), dtype=dense_dtype)
 
-        beta = _get_model(geno, covar)
-
-        geno_op = _SparseMatrixOperator(geno)
-        scale_op = lx.DiagonalLinearOperator(wgt)
-
+        beta = _get_mean_terms(geno, covar)
+        geno_op = _SparseMatrixOperator(geno, dense_dtype)
         center_op = lx.MatrixLinearOperator(covar) @ lx.MatrixLinearOperator(beta)
-        self.geno = (geno_op - center_op) @ scale_op
 
-    @singledispatchmethod
-    def __matmul__(self, other: lx.AbstractLinearOperator):
+        if scale:
+            wgt = jnp.sqrt(_get_var(geno).todense()).astype(dense_dtype)
+            scale_op = lx.DiagonalLinearOperator(1.0 / wgt)
+            self.geno = (geno_op - center_op) @ scale_op
+        else:
+            self.geno = geno_op - center_op
+
+    @property
+    def dense_dtype(self) -> JAXType:
+        return self.out_structure().dtype
+
+    @dispatch
+    def __matmul__(self, other: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
         return self.geno @ other
 
-    @__matmul__.register
-    def _(self, other: ArrayLike):
-        return self.mv(other)
+    @dispatch
+    def __matmul__(self, vector: Num[ArrayLike, " p"]) -> Float[Array, " n"]:
+        return self.mv(vector)
 
-    @singledispatchmethod
-    def __rmatmul__(self, other: lx.AbstractLinearOperator):
+    @dispatch
+    def __matmul__(self, matrix: Num[ArrayLike, "p k"]) -> Float[Array, "p k"]:
+        return self.mm(matrix)
+
+    @dispatch
+    def __rmatmul__(
+        self, other: lx.AbstractLinearOperator
+    ) -> lx.AbstractLinearOperator:
         return other @ self.geno
 
-    @__rmatmul__.register
-    def _(self, other: ArrayLike):
-        return self.T.mv(other.T).T
+    @dispatch
+    def __rmatmul__(self, vector: Num[ArrayLike, " n"]) -> Float[Array, " p"]:
+        return self.T.mv(vector.T).T
 
-    def mv(self, vector: ArrayLike):
+    @dispatch
+    def __rmatmul__(self, vector: Num[ArrayLike, "k n"]) -> Float[Array, "k p"]:
+        return self.T.mm(vector.T).T
+
+    def mv(self, vector: Num[ArrayLike, " p"]) -> Float[Array, " n"]:
         return self.geno.mv(vector)
 
-    def as_matrix(self):
+    def mm(self, matrix: Num[ArrayLike, "p k"]) -> Float[Array, "n k"]:
+        return jax.vmap(self.geno.mv, (1,), 1)(matrix)
+
+    def as_matrix(self) -> Float[Array, "n p"]:
         return self.geno.as_matrix()
 
-    def transpose(self):
-        return self.geno.T
+    def transpose(self) -> "SparseGenotype":
+        return SparseGenotype(self.geno.T)
 
-    def in_structure(self):
+    def in_structure(self) -> jax.ShapeDtypeStruct:
         return self.geno.in_structure()
 
-    def out_structure(self):
+    def out_structure(self) -> jax.ShapeDtypeStruct:
         return self.geno.out_structure()
-
-    # @property
-    # def shape(self):
-    #     return self.geno.out_structure(), self.geno.in_structure()
 
 
 @lx.is_symmetric.register(_SparseMatrixOperator)

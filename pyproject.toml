@@ -3,6 +3,7 @@ name = "geneax"
 dynamic = ["version"]
 description = "Efficient representation of genotype matrices"
 readme = "README.md"
+requires-python = ">=3.9"
 license = {file = "LICENSE.txt"}
 authors = [
     { name = "Nicholas Mancuso", email = "nmancuso@usc.edu" },
@@ -30,12 +31,6 @@ dependencies = [
 Homepage = "https://github.com/mancusolab/geneax/"
 
 
-[project.optional-dependencies]
-testing = [
-    "pytest",
-    "pytest-cov",
-    "setuptools",
-]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -51,10 +46,21 @@ version-file = "src/geneax/_version.py"
 include = ["src/"]
 exclude = ["docs/"]
 
+[tool.hatch.envs.test]
+dependencies = [
+    "coverage[toml]",
+    "pytest",
+    "pytest-cov",
+]
+
+[tool.hatch.envs.test.scripts]
+run-coverage = "pytest --cov-config=pyproject.toml --cov=pkg --cov=tests"
+run = "run-coverage --no-cov"
+
 [tool.ruff]
 line-length = 120
 select = ["E", "F", "I001"]
-ignore = ["E402", "E721", "E731", "E741", "F722"]
+ignore = ["E402", "E721", "E731", "E741", "F722", "F811"]
 ignore-init-module-imports = true
 
 [tool.ruff.isort]
