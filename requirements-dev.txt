@@ -3,7 +3,7 @@ jax
 jaxlib
 lineax
 numpy
-plum
+plum-dispatch
 pytest
 pytest-accept
 pytest-cov

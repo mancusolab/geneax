@@ -37,10 +37,13 @@ def test_matmul(N: int, P: int, K: int, sp_cls: Type[xsp.JAXSparse], seed: int =
     key, g_key = rdm.split(key)
 
     G = _get_geno(g_key, N, P)
-    Z = (G - jnp.mean(G, axis=0)) / jnp.std(G, axis=0)
+    M = jnp.mean(G, axis=0, dtype=jnp.float64)
+    S = 1.0 / jnp.std(G, axis=0, dtype=jnp.float64)
+    Z = (G - M) * S
     geno = gx.SparseGenotype(
-        sp_cls.fromdense(G).astype(jnp.int8),
+        sp_cls.fromdense(G),
         scale=True,
+        dense_dtype=jnp.float64,
     )
 
     key, r_key = rdm.split(key)
@@ -70,8 +73,14 @@ def test_rmatmul(N: int, P: int, K: int, sp_cls: Type[xsp.JAXSparse], seed: int 
     key, g_key = rdm.split(key)
 
     G = _get_geno(g_key, N, P)
-    Z = (G - jnp.mean(G, axis=0)) / jnp.std(G, axis=0)
-    geno = gx.SparseGenotype(sp_cls.fromdense(G).astype(jnp.int8), scale=True)
+    M = jnp.mean(G, axis=0, dtype=jnp.float64)
+    S = 1.0 / jnp.std(G, axis=0, dtype=jnp.float64)
+    Z = (G - M) * S
+    geno = gx.SparseGenotype(
+        sp_cls.fromdense(G),
+        scale=True,
+        dense_dtype=jnp.float64,
+    )
 
     key, l_key = rdm.split(key)
     L = rdm.normal(l_key, shape=(K, N))

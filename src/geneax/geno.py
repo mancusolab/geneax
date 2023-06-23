@@ -15,6 +15,9 @@ from jax.experimental import sparse
 from jaxtyping import Array, ArrayLike, Float, Num
 
 
+_sparse_mean = sparse.sparsify(jnp.mean)
+
+
 @jax.jit
 @sparse.sparsify
 def _get_mean_terms(geno: ArrayLike, covar: ArrayLike) -> Array:
@@ -33,24 +36,22 @@ def _get_mean_terms(geno: ArrayLike, covar: ArrayLike) -> Array:
     return beta
 
 
-@jax.jit
-@sparse.sparsify
-def _get_var(geno: sparse.JAXSparse):
+def _get_dense_var(geno: sparse.JAXSparse, dense_dtype: JAXType):
     # def _inner(_, variant):
     #     var_idx = jnp.mean(variant **2) - jnp.mean(variant) ** 2
     #     return _, var_idx
     #
     # _, var_geno = lax.scan(_inner, 0.0, geno.T)
-    var_geno = jnp.mean(geno**2, axis=0) - jnp.mean(geno, axis=0) ** 2
+    var_geno = _sparse_mean(geno**2, axis=0, dtype=dense_dtype) - _sparse_mean(geno, axis=0, dtype=dense_dtype) ** 2
 
-    return var_geno
+    return var_geno.todense()
 
 
 class _SparseMatrixOperator(lx.AbstractLinearOperator):
     matrix: sparse.JAXSparse
     dense_dtype: JAXType
 
-    def __init__(self, matrix, dense_dtype: JAXType = jnp.float32):
+    def __init__(self, matrix, dense_dtype: JAXType = jnp.float64):
         self.matrix = matrix
         self.dense_dtype = dense_dtype
 
@@ -89,14 +90,14 @@ class SparseGenotype(lx.AbstractLinearOperator):
         geno: sparse.JAXSparse,
         covar: Optional[ArrayLike] = None,
         scale: bool = False,
-        dense_dtype: JAXType = jnp.float32,
+        dense_dtype: JAXType = jnp.float64,
     ):
         n, p = geno.shape
         geno_op = _SparseMatrixOperator(geno, dense_dtype)
 
         if covar is None:
             covar = jnp.ones((n, 1), dtype=dense_dtype)
-            beta = sparse.sparsify(jnp.mean)(geno, axis=0).todense().astype(dense_dtype)
+            beta = _sparse_mean(geno, axis=0, dtype=dense_dtype).todense()
             beta = beta.reshape((1, p))
         else:
             beta = _get_mean_terms(geno, covar)
@@ -104,7 +105,7 @@ class SparseGenotype(lx.AbstractLinearOperator):
         center_op = lx.MatrixLinearOperator(covar) @ lx.MatrixLinearOperator(beta)
 
         if scale:
-            wgt = jnp.sqrt(_get_var(geno).todense()).astype(dense_dtype)
+            wgt = jnp.sqrt(_get_dense_var(geno, dense_dtype))
             scale_op = lx.DiagonalLinearOperator(1.0 / wgt)
             self.geno = (geno_op - center_op) @ scale_op
         else:

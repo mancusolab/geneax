@@ -2,5 +2,5 @@ importlib-metadata; python_version<"3.8"
 jax
 jaxlib
 lineax
-plum
+plum-dispatch
 setuptools
