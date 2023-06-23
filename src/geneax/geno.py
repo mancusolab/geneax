@@ -42,7 +42,10 @@ def _get_dense_var(geno: sparse.JAXSparse, dense_dtype: JAXType):
     #     return _, var_idx
     #
     # _, var_geno = lax.scan(_inner, 0.0, geno.T)
-    var_geno = _sparse_mean(geno**2, axis=0, dtype=dense_dtype) - _sparse_mean(geno, axis=0, dtype=dense_dtype) ** 2
+    var_geno = (
+        _sparse_mean(geno**2, axis=0, dtype=dense_dtype)
+        - _sparse_mean(geno, axis=0, dtype=dense_dtype) ** 2
+    )
 
     return var_geno.todense()
 
