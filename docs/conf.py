@@ -11,7 +11,6 @@ import os
 import shutil
 import sys
 
-
 # -- Path setup --------------------------------------------------------------
 
 __location__ = os.path.dirname(__file__)

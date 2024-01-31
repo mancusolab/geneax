@@ -1,25 +1,16 @@
-import warnings
-
 from typing import Tuple
 
 import pandas as pd
 
-from jax import config
+from bgen_reader import open_bgen
+from cyvcf2 import VCF
+from pandas_plink import read_plink
 
-
-config.update("jax_enable_x64", True)
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    from bgen_reader import open_bgen
-    from cyvcf2 import VCF
-    from pandas_plink import read_plink
-
-    import jax.numpy as jnp
-
-import geno
+import jax.numpy as jnp
 
 from jax.experimental import sparse
+
+from . import geno
 
 
 ## Modified from Sushie https://github.com/mancusolab/sushie/blob/main/sushie/io.py#L194
@@ -42,7 +33,7 @@ def read_triplet(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, geno.SparseGeno
     fam = fam[["iid"]]
     # we want bed file to be nxp
     bed = geno.SparseGenotype(
-        sparse.BCOO.fromdense(jnp.array(bed.compute().T, dtype="float64"))
+        sparse.BCOO.fromdense(jnp.array(bed.compute().T, dtype=jnp.float64))
     )
     return bim, fam, bed
 

@@ -20,7 +20,7 @@ _sparse_mean = sparse.sparsify(jnp.mean)
 
 @jax.jit
 @sparse.sparsify
-def _get_mean_terms(geno: ArrayLike, covar: ArrayLike) -> Array:
+def _get_mean_terms(geno: Array, covar: Array) -> Array:
     m, n = covar.shape
     dtype = covar.dtype
     rcond = jnp.finfo(dtype).eps * max(n, m)
@@ -50,77 +50,21 @@ def _get_dense_var(geno: sparse.JAXSparse, dense_dtype: JAXType):
     return var_geno.todense()
 
 
-class _SparseMatrixOperator(lx.AbstractLinearOperator):
+class SparseMatrix(lx.AbstractLinearOperator):
     matrix: sparse.JAXSparse
-    dense_dtype: JAXType
 
-    def __init__(self, matrix, dense_dtype: JAXType = jnp.float64):
+    def __init__(self, matrix: sparse.JAXSparse):
         self.matrix = matrix
-        self.dense_dtype = dense_dtype
 
     def mv(self, vector: ArrayLike):
-        return sparse.sparsify(jnp.matmul)(
-            self.matrix, vector, precision=lax.Precision.HIGHEST
-        )
+        return sparse.sparsify(jnp.matmul)(self.matrix, vector, precision=lax.Precision.HIGHEST)  # type: ignore
 
-    def as_matrix(self) -> Float[Array, "n p"]:
-        # raise ValueError("Refusing to materialise sparse matrix.")
-        # Or you could do:
-        return self.matrix.todense()
-
-    def transpose(self) -> "_SparseMatrixOperator":
-        return _SparseMatrixOperator(self.matrix.T, self.dense_dtype)
-
-    def in_structure(self) -> jax.ShapeDtypeStruct:
-        _, in_size = self.matrix.shape
-        return jax.ShapeDtypeStruct((in_size,), self.dense_dtype)
-
-    def out_structure(self) -> jax.ShapeDtypeStruct:
-        out_size, _ = self.matrix.shape
-        return jax.ShapeDtypeStruct((out_size,), self.dense_dtype)
-
-
-class SparseGenotype(lx.AbstractLinearOperator):
-    geno: lx.AbstractLinearOperator
-
-    @dispatch
-    def __init__(self, geno: lx.AbstractLinearOperator):
-        self.geno = geno
-
-    @dispatch
-    def __init__(
-        self,
-        geno: sparse.JAXSparse,
-        covar: Optional[ArrayLike] = None,
-        scale: bool = False,
-        dense_dtype: JAXType = jnp.float64,
-    ):
-        n, p = geno.shape
-        geno_op = _SparseMatrixOperator(geno, dense_dtype)
-
-        if covar is None:
-            covar = jnp.ones((n, 1), dtype=dense_dtype)
-            beta = _sparse_mean(geno, axis=0, dtype=dense_dtype).todense()
-            beta = beta.reshape((1, p))
-        else:
-            beta = _get_mean_terms(geno, covar)
-
-        center_op = lx.MatrixLinearOperator(covar) @ lx.MatrixLinearOperator(beta)
-
-        if scale:
-            wgt = jnp.sqrt(_get_dense_var(geno, dense_dtype))
-            scale_op = lx.DiagonalLinearOperator(1.0 / wgt)
-            self.geno = (geno_op - center_op) @ scale_op
-        else:
-            self.geno = geno_op - center_op
-
-    @property
-    def dense_dtype(self) -> JAXType:
-        return self.out_structure().dtype
+    def mm(self, matrix: Num[ArrayLike, "p k"]) -> Float[Array, "n k"]:
+        return jax.vmap(self.mv, (1,), 1)(matrix)
 
     @dispatch
     def __matmul__(self, other: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
-        return self.geno @ other
+        return self.matrix @ other
 
     @dispatch
     def __matmul__(self, vector: Num[ArrayLike, " p"]) -> Float[Array, " n"]:
@@ -134,48 +78,155 @@ class SparseGenotype(lx.AbstractLinearOperator):
     def __rmatmul__(
         self, other: lx.AbstractLinearOperator
     ) -> lx.AbstractLinearOperator:
-        return other @ self.geno
+        return other @ self.matrix
 
     @dispatch
     def __rmatmul__(self, vector: Num[ArrayLike, " n"]) -> Float[Array, " p"]:
-        return self.T.mv(vector.T).T
+        return self.T.mv(jnp.asarray(vector).T).T
 
     @dispatch
-    def __rmatmul__(self, vector: Num[ArrayLike, "k n"]) -> Float[Array, "k p"]:
-        return self.T.mm(vector.T).T
-
-    def mv(self, vector: Num[ArrayLike, " p"]) -> Float[Array, " n"]:
-        return self.geno.mv(vector)
-
-    def mm(self, matrix: Num[ArrayLike, "p k"]) -> Float[Array, "n k"]:
-        return jax.vmap(self.geno.mv, (1,), 1)(matrix)
+    def __rmatmul__(self, matrix: Num[ArrayLike, "k n"]) -> Float[Array, "k p"]:
+        return self.T.mm(jnp.asarray(matrix).T).T
 
     def as_matrix(self) -> Float[Array, "n p"]:
-        return self.geno.as_matrix()
+        # raise ValueError("Refusing to materialise sparse matrix.")
+        # Or you could do:
+        return self.matrix.todense()
 
-    def transpose(self) -> "SparseGenotype":
-        return SparseGenotype(self.geno.T)
+    def transpose(self) -> "SparseMatrix":
+        return SparseMatrix(self.matrix.T)
 
     def in_structure(self) -> jax.ShapeDtypeStruct:
-        return self.geno.in_structure()
+        _, in_size = self.matrix.shape
+        return jax.ShapeDtypeStruct((in_size,), self.matrix.dtype)
 
     def out_structure(self) -> jax.ShapeDtypeStruct:
-        return self.geno.out_structure()
+        out_size, _ = self.matrix.shape
+        return jax.ShapeDtypeStruct((out_size,), self.matrix.dtype)
+
+    @property
+    def shape(self):
+        n, *_ = self.out_structure().shape
+        p, *_ = self.in_structure().shape
+
+        return n, p
 
 
-@lx.is_symmetric.register(_SparseMatrixOperator)
-@lx.is_symmetric.register(SparseGenotype)
+class GenotypeMatrix(lx.AbstractLinearOperator):
+    data: lx.AbstractLinearOperator
+
+    @dispatch
+    def __init__(self, data: lx.AbstractLinearOperator):
+        self.data = data
+
+    @staticmethod
+    def init(
+        cls,
+        matrix: sparse.JAXSparse,
+        covar: Optional[ArrayLike] = None,
+        scale: bool = False,
+    ):
+        n, p = matrix.shape
+        geno_op = SparseMatrix(matrix)
+        dtype = matrix.dtype
+
+        if covar is None:
+            covar = jnp.ones((n, 1), dtype=dtype)
+            beta = _sparse_mean(matrix, axis=0, dtype=dtype).todense()
+            beta = beta.reshape((1, p))
+        else:
+            beta = _get_mean_terms(matrix, covar)
+
+        center_op = lx.MatrixLinearOperator(covar) @ lx.MatrixLinearOperator(beta)
+
+        if scale:
+            wgt = jnp.sqrt(_get_dense_var(matrix, dtype))
+            scale_op = lx.DiagonalLinearOperator(1.0 / wgt)
+            data = (geno_op - center_op) @ scale_op
+        else:
+            data = geno_op - center_op
+
+        return cls(data)
+
+    @property
+    def dense_dtype(self) -> JAXType:
+        return self.out_structure().dtype
+
+    def mv(self, vector: Num[ArrayLike, " p"]) -> Float[Array, " n"]:
+        return self.data.mv(vector)
+
+    def mm(self, matrix: Num[ArrayLike, "p k"]) -> Float[Array, "n k"]:
+        return jax.vmap(self.data.mv, (1,), 1)(jnp.asarray(matrix))
+
+    @dispatch
+    def __matmul__(self, other: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
+        return self.data @ other
+
+    @dispatch
+    def __matmul__(self, vector: Num[ArrayLike, " p"]) -> Float[Array, " n"]:
+        return self.mv(vector)
+
+    @dispatch
+    def __matmul__(self, matrix: Num[ArrayLike, "p k"]) -> Float[Array, "p k"]:
+        return self.mm(matrix)
+
+    @dispatch
+    def __rmatmul__(
+        self, other: lx.AbstractLinearOperator
+    ) -> lx.AbstractLinearOperator:
+        return other @ self.data
+
+    @dispatch
+    def __rmatmul__(self, vector: Num[ArrayLike, " n"]) -> Float[Array, " p"]:
+        return self.T.mv(jnp.asarray(vector).T).T
+
+    @dispatch
+    def __rmatmul__(self, matrix: Num[ArrayLike, "k n"]) -> Float[Array, "k p"]:
+        return self.T.mm(jnp.asarray(matrix).T).T
+
+    def as_matrix(self) -> Float[Array, "n p"]:
+        return self.data.as_matrix()
+
+    def transpose(self) -> "GenotypeMatrix":
+        return GenotypeMatrix(self.data.T)
+
+    @property
+    def shape(self):
+        n, *_ = self.out_structure().shape
+        p, *_ = self.in_structure().shape
+
+        return n, p
+
+    def in_structure(self) -> jax.ShapeDtypeStruct:
+        return self.data.in_structure()
+
+    def out_structure(self) -> jax.ShapeDtypeStruct:
+        return self.data.out_structure()
+
+
+@lx.is_symmetric.register(SparseMatrix)
+@lx.is_symmetric.register(GenotypeMatrix)
 def _(op):
     return False
 
 
-@lx.is_negative_semidefinite.register(_SparseMatrixOperator)
-@lx.is_negative_semidefinite.register(SparseGenotype)
+@lx.is_negative_semidefinite.register(SparseMatrix)
+@lx.is_negative_semidefinite.register(GenotypeMatrix)
 def _(op):
     return False
 
 
-@lx.linearise.register(_SparseMatrixOperator)
-@lx.linearise.register(SparseGenotype)
+@lx.linearise.register(SparseMatrix)
+@lx.linearise.register(GenotypeMatrix)
 def _(op):
     return op
+
+
+@lx.conj.register(SparseMatrix)
+def _(op):
+    return SparseMatrix(op.matrix)
+
+
+@lx.conj.register(GenotypeMatrix)
+def _(op):
+    return GenotypeMatrix(op.data)
