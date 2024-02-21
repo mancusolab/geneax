@@ -2,53 +2,68 @@ from typing import Tuple
 
 import pandas as pd
 
+from bed_reader import open_bed
 from bgen_reader import open_bgen
 from cyvcf2 import VCF
-from pandas_plink import read_plink
 
 import jax.numpy as jnp
 
 from jax.experimental import sparse
+from jax.experimental.sparse import BCOO
 
 from . import geno
 
 
-## Modified from Sushie https://github.com/mancusolab/sushie/blob/main/sushie/io.py#L194
-def read_triplet(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, geno.SparseGenotype]:
+def read_plink(
+    path: str, scale: bool = True
+) -> Tuple[pd.DataFrame, pd.DataFrame, geno.GenotypeMatrix]:
     """Read in genotype data in `plink 1 <https://www.cog-genomics.org/plink/1.9/input#bed>`_ format.
 
     Args:
         path: The path for plink genotype data (suffix only).
+        scale:
 
     Returns:
-        :py:obj:`Tuple[pd.DataFrame, pd.DataFrame, jnp.ndarray]`: A tuple of
+        :py:obj:`Tuple[pd.DataFrame, pd.DataFrame, geno.GenotypeMatrix]`: A tuple of
             #. SNP information (bim; :py:obj:`pd.DataFrame`),
             #. individuals information (fam; :py:obj:`pd.DataFrame`),
-            #. genotype matrix (bed; :py:obj:`jnp.ndarray`).
+            #. genotype matrix (:py:obj:`geno.GenotypeMatrix`).
 
     """
 
-    bim, fam, bed = read_plink(path, verbose=False)
-    bim = bim[["chrom", "snp", "pos", "a0", "a1"]]
-    fam = fam[["iid"]]
+    with open_bed(path) as bed:
+        sparse_matrix = bed.read_sparse(dtype="int8")  # a scipy.sparse.csc_matrix
+        sparse_matrix = BCOO.from_scipy_sparse(sparse_matrix.tocoo())
+
     # we want bed file to be nxp
-    bed = geno.SparseGenotype(
-        sparse.BCOO.fromdense(jnp.array(bed.compute().T, dtype=jnp.float64))
+    geno_matrix = geno.GenotypeMatrix.init(sparse_matrix, scale=scale)
+    bim = pd.DataFrame(
+        {
+            "chrom": bed.chromosome,
+            "snp": bed.sid,
+            "pos": bed.bp_position,
+            "a0": bed.allele_1,
+            "a1": bed.allele_2,
+        }
     )
-    return bim, fam, bed
+    fam = pd.DataFrame({"iid": bed.iid})
+    return bim, fam, geno_matrix
 
 
-def read_vcf(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, geno.SparseGenotype]:
+def read_vcf(
+    path: str, scale: bool = True
+) -> Tuple[pd.DataFrame, pd.DataFrame, geno.GenotypeMatrix]:
     """Read in genotype data in `vcf <https://en.wikipedia.org/wiki/Variant_Call_Format>`_ format.
 
     Args:
         path: The path for vcf genotype data (full file name).
+        scale:
 
     Returns:
-        :py:obj:`Tuple[pd.DataFrame, pd.DataFrame, jnp.ndarray]`: A tuple of
+        :py:obj:`Tuple[pd.DataFrame, pd.DataFrame, geno.GenotypeMatrix]`: A tuple of
             #. SNP information (bim; :py:obj:`pd.DataFrame`),
             #. participants information (fam; :py:obj:`pd.DataFrame`),
-            #. genotype matrix (bed; :py:obj:`jnp.ndarray`).
+            #. genotype matrix (:py:obj:`geno.GenotypeMatrix`).
 
     """
 
@@ -63,24 +78,28 @@ def read_vcf(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, geno.SparseGenotype
         bed_list.append(tmp_bed)
 
     bim = pd.DataFrame(bim_list, columns=["chrom", "snp", "pos", "a0", "a1"])
-    bed = geno.SparseGenotype(
-        sparse.BCOO.fromdense(jnp.array(bed_list, dtype="float64").T), scale=True
+    geno_matrix = geno.GenotypeMatrix.init(
+        sparse.BCOO.fromdense(jnp.array(bed_list, dtype="float64").T),
+        scale=scale,
     )
 
-    return bim, fam, bed
+    return bim, fam, geno_matrix
 
 
-def read_bgen(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, geno.SparseGenotype]:
+def read_bgen(
+    path: str, scale: bool = True
+) -> Tuple[pd.DataFrame, pd.DataFrame, geno.GenotypeMatrix]:
     """Read in genotype data in `bgen <https://www.well.ox.ac.uk/~gav/bgen_format/>`_ 1.3 format.
 
     Args:
         path: The path for bgen genotype data (full file name).
+        scale:
 
     Returns:
-        :py:obj:`Tuple[pd.DataFrame, pd.DataFrame, jnp.ndarray]`: A tuple of
+        :py:obj:`Tuple[pd.DataFrame, pd.DataFrame, geno.GenotypeMatrix]`: A tuple of
             #. SNP information (bim; :py:obj:`pd.DataFrame`),
             #. individuals information (fam; :py:obj:`pd.DataFrame`),
-            #. genotype matrix (bed; :py:obj:`jnp.ndarray`).
+            #. genotype matrix (:py:obj:`geno.GenotypeMatrix`).
 
     """
 
@@ -97,14 +116,14 @@ def read_bgen(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, geno.SparseGenotyp
     bim = pd.concat([bim, allele], axis=1).reset_index(drop=True)[
         ["chrom", "snp", "pos", "a0", "a1"]
     ]
-    bed = geno.SparseGenotype(
+    geno_matrix = geno.GenotypeMatrix.init(
         sparse.BCOO.fromdense(
             jnp.array(
                 jnp.einsum("ijk,k->ij", bgen.read(), jnp.array([0, 1, 2])),
                 dtype="float64",
             )
         ),
-        scale=True,
+        scale=scale,
     )
 
-    return bim, fam, bed
+    return bim, fam, geno_matrix

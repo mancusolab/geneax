@@ -1,6 +1,9 @@
-importlib-metadata; python_version<"3.8"
+bed_reader
+bgen_reader
+cyvcf2
 jax
 jaxlib
 lineax
+pandas
 plum-dispatch
 setuptools

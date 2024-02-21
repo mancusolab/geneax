@@ -119,7 +119,7 @@ class GenotypeMatrix(lx.AbstractLinearOperator):
     def __init__(self, data: lx.AbstractLinearOperator):
         self.data = data
 
-    @staticmethod
+    @classmethod
     def init(
         cls,
         matrix: sparse.JAXSparse,
@@ -128,11 +128,10 @@ class GenotypeMatrix(lx.AbstractLinearOperator):
     ):
         n, p = matrix.shape
         geno_op = SparseMatrix(matrix)
-        dtype = matrix.dtype
 
         if covar is None:
-            covar = jnp.ones((n, 1), dtype=dtype)
-            beta = _sparse_mean(matrix, axis=0, dtype=dtype).todense()
+            covar = jnp.ones((n, 1))
+            beta = geno_op.T.mv(jnp.ones((n,))) / (2 * n)
             beta = beta.reshape((1, p))
         else:
             beta = _get_mean_terms(matrix, covar)
@@ -140,7 +139,11 @@ class GenotypeMatrix(lx.AbstractLinearOperator):
         center_op = lx.MatrixLinearOperator(covar) @ lx.MatrixLinearOperator(beta)
 
         if scale:
-            wgt = jnp.sqrt(_get_dense_var(matrix, dtype))
+            # hack
+            n_ones = jnp.ones((n, 1))
+            mean_sq_geno = SparseMatrix(matrix**2).T.mv(n_ones) / n
+            mean_geno_sq = (geno_op.T.mv(n_ones) / n) ** 2
+            wgt = jnp.sqrt(mean_sq_geno - mean_geno_sq).squeeze()
             scale_op = lx.DiagonalLinearOperator(1.0 / wgt)
             data = (geno_op - center_op) @ scale_op
         else:

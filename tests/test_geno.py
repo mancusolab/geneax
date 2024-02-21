@@ -40,10 +40,9 @@ def test_matmul(N: int, P: int, K: int, sp_cls: Type[xsp.JAXSparse], seed: int =
     M = jnp.mean(G, axis=0, dtype=jnp.float64)
     S = 1.0 / jnp.std(G, axis=0, dtype=jnp.float64)
     Z = (G - M) * S
-    geno = gx.SparseGenotype(
+    geno = gx.GenotypeMatrix.init(
         sp_cls.fromdense(G),
         scale=True,
-        dense_dtype=jnp.float64,
     )
 
     key, r_key = rdm.split(key)
@@ -76,10 +75,9 @@ def test_rmatmul(N: int, P: int, K: int, sp_cls: Type[xsp.JAXSparse], seed: int 
     M = jnp.mean(G, axis=0, dtype=jnp.float64)
     S = 1.0 / jnp.std(G, axis=0, dtype=jnp.float64)
     Z = (G - M) * S
-    geno = gx.SparseGenotype(
+    geno = gx.GenotypeMatrix.init(
         sp_cls.fromdense(G),
         scale=True,
-        dense_dtype=jnp.float64,
     )
 
     key, l_key = rdm.split(key)

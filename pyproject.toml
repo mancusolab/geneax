@@ -21,10 +21,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
-    "importlib-metadata; python_version<\"3.8\"",
     "jaxlib",
     "jax",
     "lineax",
+    "plum-dispatch",
+    "setuptools",
+    "cyvcf2",
+    "bed_reader",
+    "bgen_reader",
+    "pandas",
 ]
 
 [project.urls]
